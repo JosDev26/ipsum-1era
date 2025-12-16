@@ -178,7 +178,7 @@
         list-style: none;
         display: flex;
         flex-direction: column;
-        place-content: start;
+        place-content: flex-start;
         place-items: center;
         height: 100%;
         gap: 3em;

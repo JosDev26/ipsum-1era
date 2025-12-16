@@ -1,75 +1,55 @@
 import { NextResponse } from 'next/server';
-import dropboxV2Api from 'dropbox-v2-api';
-import axios from 'axios'
+import { Dropbox } from 'dropbox';
+import axios from 'axios';
+
 const CLIENT_ID = process.env.DROPBOX_CLIENT_ID;
 const CLIENT_SECRET = process.env.DROPBOX_CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN;
 
-
 async function getAccessToken() {
-    try {
-        const response = await axios.post("https://api.dropbox.com/oauth2/token", new URLSearchParams({
-            refresh_token: REFRESH_TOKEN,
-            grant_type: "refresh_token",
-            client_id: CLIENT_ID,
-            client_secret: CLIENT_SECRET
-        }).toString(), {
-            headers: { "Content-Type": "application/x-www-form-urlencoded" }
-        });
-
-        return response.data.access_token;
-    } catch (error) {
-        console.error("Error obteniendo el access token:", error.response.data);
-        return null;
-    }
+  try {
+    const response = await axios.post("https://api.dropbox.com/oauth2/token", new URLSearchParams({
+      refresh_token: REFRESH_TOKEN,
+      grant_type: "refresh_token",
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET
+    }).toString(), {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" }
+    });
+    return response.data.access_token;
+  } catch (error) {
+    console.error("Error obteniendo el access token:", error.response?.data);
+    return null;
+  }
 }
 
-const token = await getAccessToken();
+async function getDropboxClient() {
+  const token = await getAccessToken();
+  console.log(token);
+  return new Dropbox({ accessToken: token });
+}
 
-const dropbox = dropboxV2Api.authenticate({
-  token: token,
-});
-
-// Ejecutar para obtener un nuevo token
-
-console.log(token)
-
-
-async function getOrCreateSharedLink(path) {
-
-
+async function getOrCreateSharedLink(dbx, path) {
   try {
     // First, try to get existing shared links
-    const existingLinks = await new Promise((resolve, reject) => {
-      dropbox({
-        resource: 'sharing/list_shared_links',
-        parameters: { path, direct_only: true },
-      }, (err, result) => {
-        if (err) return reject(err);
-        resolve(result);
-      });
+    const existingLinks = await dbx.sharingListSharedLinks({
+      path,
+      direct_only: true
     });
 
-    if (existingLinks.links && existingLinks.links.length > 0) {
+    if (existingLinks.result.links && existingLinks.result.links.length > 0) {
       // If a shared link exists, return it
-      return existingLinks.links[0];
+      return existingLinks.result.links[0];
     }
 
     // If no shared link exists, create a new one
-    return await new Promise((resolve, reject) => {
-      dropbox({
-        resource: 'sharing/create_shared_link_with_settings',
-        parameters: {
-          path: path,
-          settings: {
-            requested_visibility: 'public',
-          },
-        },
-      }, (err, result) => {
-        if (err) return reject(err);
-        resolve(result);
-      });
+    const newLink = await dbx.sharingCreateSharedLinkWithSettings({
+      path: path,
+      settings: {
+        requested_visibility: { '.tag': 'public' }
+      }
     });
+    return newLink.result;
   } catch (error) {
     console.error('Error in api/getFiles/getOrCreateSharedLink:', error);
     throw error;
@@ -77,33 +57,27 @@ async function getOrCreateSharedLink(path) {
 }
 
 export async function GET(request) {
-const { searchParams } = new URL(request.url);
-const prefix = searchParams.get("prefix")
-const formattedPrefix = convertStringFormat(prefix)
+  const { searchParams } = new URL(request.url);
+  const prefix = searchParams.get("prefix");
+  const formattedPrefix = convertStringFormat(prefix);
+
   try {
-    const result = await new Promise((resolve, reject) => {
-      dropbox({
-        resource: 'files/list_folder',
-        parameters: {
-          path: `/${formattedPrefix}`,
-        },
-      }, (err, result) => {
-        if (err) return reject(err);
-        resolve(result);
-      });
+    const dbx = await getDropboxClient();
+    
+    const result = await dbx.filesListFolder({
+      path: `/${formattedPrefix}`
     });
 
-    const files = await Promise.all(result.entries.map(async (entry) => {
+    const files = await Promise.all(result.result.entries.map(async (entry) => {
       if (entry['.tag'] === 'file') {
         try {
-          const sharedLinkResponse = await getOrCreateSharedLink(entry.path_lower);
+          const sharedLinkResponse = await getOrCreateSharedLink(dbx, entry.path_lower);
           const fileUrl = sharedLinkResponse.url.replace('www.dropbox.com', 'dl.dropboxusercontent.com');
-
 
           return {
             name: entry.name,
             size: entry.size,
-            type: entry.type,
+            type: entry['.tag'],
             url: fileUrl,
             pathname: entry.path_display
           };
@@ -119,17 +93,13 @@ const formattedPrefix = convertStringFormat(prefix)
 
     return NextResponse.json({ files: validFiles });
   } catch (error) {
-
-
-    if (error.code == 409) {
+    if (error.status === 409) {
       console.log('No es un error: La ruta no existe', error);
-      return NextResponse.json({ msg: "La ruta no existe", route_not_found : true });
+      return NextResponse.json({ msg: "La ruta no existe", route_not_found: true });
     } else {
       console.error('Error in GET route:', error);
       return NextResponse.json({ message: 'Error fetching files', error: error.message }, { status: 500 });
     }
-
-
   }
 }
 
