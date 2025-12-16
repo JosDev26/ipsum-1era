@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import dropboxV2Api from 'dropbox-v2-api';
-import axios from 'axios'
+import { Dropbox } from 'dropbox';
+import axios from 'axios';
+
 const CLIENT_ID = process.env.DROPBOX_CLIENT_ID;
 const CLIENT_SECRET = process.env.DROPBOX_CLIENT_SECRET;
 const REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN;
@@ -19,51 +20,36 @@ async function getAccessToken() {
         console.log("Nuevo Access Token:", response.data.access_token);
         return response.data.access_token;
     } catch (error) {
-        console.error("Error obteniendo el access token en api/deleteBlob/getAccessToken:", error.response.data);
+        console.error("Error obteniendo el access token en api/deleteBlob/getAccessToken:", error.response?.data);
         return null;
     }
 }
 
-// Ejecutar para obtener un nuevo token
-
-const token = await getAccessToken();
-
-const dropbox = dropboxV2Api.authenticate({
-token: token,
-});
-
-
+async function getDropboxClient() {
+    const token = await getAccessToken();
+    return new Dropbox({ accessToken: token });
+}
 
 export async function DELETE(request) {
     const body = await request.json();
-    const pathname = body.pathname
+    const pathname = body.pathname;
 
+    const formattedPathname = convertStringFormat(pathname);
 
-    const formattedPathname = convertStringFormat(pathname)
-
-    console.log("formattedPathname", formattedPathname)
+    console.log("formattedPathname", formattedPathname);
 
     try {
-        await dropbox({
-            resource: 'files/delete',
-            parameters: {
-                'path': `${formattedPathname}`
-            }
-        }, (err, result, response) => {
-            if (err) {
-                console.error(err)
-            }
-
+        const dbx = await getDropboxClient();
+        
+        await dbx.filesDeleteV2({
+            path: formattedPathname
         });
 
-    return NextResponse.json({ "Succesful Delete": true });
+        return NextResponse.json({ "Succesful Delete": true });
     } catch (error) {
-        console.log("Error en api/deleteBlob/DELETE:", error + "Pathname: " + pathname)
-        return NextResponse.json({ "Error": true, error });
+        console.log("Error en api/deleteBlob/DELETE:", error + "Pathname: " + pathname);
+        return NextResponse.json({ "Error": true, error: error.message }, { status: 500 });
     }
-    
-    
-
 }
 
 function convertStringFormat(inputString) {
@@ -80,8 +66,7 @@ function convertStringFormat(inputString) {
         
         return processed;
     } catch (error) {
-        console.error("Error al formatear nombres", error, inputString)
+        console.error("Error al formatear nombres", error, inputString);
     }
-
-  }
+}
 
